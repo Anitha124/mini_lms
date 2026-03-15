@@ -8,9 +8,26 @@ const ActivityLog = require('../models/ActivityLog');
 const progressController = require('./progressController');
 const OpenAI = require('openai');
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+const openaiOptions = {
+    apiKey: process.env.OPENROUTER_API_KEY,
+};
+
+// Log initialization info (sanitized) to help debug 401 errors
+const apiKey = process.env.OPENROUTER_API_KEY || '';
+const isOpenRouter = apiKey.startsWith('sk-or-');
+
+if (isOpenRouter) {
+    openaiOptions.baseURL = 'https://openrouter.ai/api/v1';
+    openaiOptions.defaultHeaders = {
+        "HTTP-Referer": "http://localhost:5000",
+        "X-Title": "EduNexus LMS",
+    };
+    console.log(`[AI] Initializing with OpenRouter. Key starts with: ${apiKey.substring(0, 10)}...`);
+} else {
+    console.log(`[AI] Initializing with OpenAI. Key starts with: ${apiKey.substring(0, 7)}...`);
+}
+
+const openai = new OpenAI(openaiOptions);
 
 // Create quiz
 exports.createQuiz = async (req, res) => {
@@ -285,9 +302,13 @@ exports.generateQuizAI = async (req, res) => {
             ${context}
         `;
 
+        const modelName = process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.startsWith('sk-or-') 
+            ? "openrouter/auto" 
+            : "gpt-4o-mini";
+
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
-            model: "gpt-4o-mini",
+            model: modelName,
         });
 
         const content = completion.choices[0].message.content;
@@ -311,7 +332,9 @@ exports.generateQuizAI = async (req, res) => {
 
     } catch (error) {
         console.error('Error generating AI quiz:', error);
-        res.status(500).json({ success: false, message: 'Server error during AI generation' });
+        const status = error.status || 500;
+        const message = error.error?.message || error.message || 'Server error during AI generation';
+        res.status(status).json({ success: false, message: `AI Error (${status}): ${message}` });
     }
 };
 
@@ -335,9 +358,13 @@ exports.suggestOptionsAI = async (req, res) => {
             ${questionText}
         `;
 
+        const modelName = process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.startsWith('sk-or-') 
+            ? "openrouter/auto" 
+            : "gpt-4o-mini";
+
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
-            model: "gpt-4o-mini",
+            model: modelName,
         });
 
         const content = completion.choices[0].message.content;
@@ -359,7 +386,9 @@ exports.suggestOptionsAI = async (req, res) => {
 
     } catch (error) {
         console.error('Error suggesting options:', error);
-        res.status(500).json({ success: false, message: 'Server error during AI suggestion' });
+        const status = error.status || 500;
+        const message = error.error?.message || error.message || 'Server error during AI suggestion';
+        res.status(status).json({ success: false, message: `AI Error (${status}): ${message}` });
     }
 };
 
