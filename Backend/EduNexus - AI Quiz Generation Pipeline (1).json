@@ -1,0 +1,147 @@
+{
+  "name": "EduNexus - AI Quiz Generation Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=System: You are a quiz generator. You MUST return ONLY a raw JSON array. Do not use markdown tables or explanations.\n\nUser: Generate {{ $json.body.questionCount || 5 }} MCQ questions based on this text: {{ $json.body.context }}. \nDifficulty: {{ $json.body.difficulty }}.\nRequired Format: \n[\n  {\n    \"questionText\": \"...\",\n    \"questionType\": \"mcq-single\",\n    \"options\": [\n      { \"text\": \"...\", \"isCorrect\": true },\n      { \"text\": \"...\", \"isCorrect\": false },\n      { \"text\": \"...\", \"isCorrect\": false },\n      { \"text\": \"...\", \"isCorrect\": false }\n    ]\n  }\n]",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        144,
+        1408
+      ],
+      "id": "e2b081ec-21d0-44d6-89ee-97df877acb68",
+      "name": "AI Analysing"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-quiz",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "975bcd8b-33e7-46a3-b286-c358fcd98f6c",
+      "name": "Frontend Request1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        384,
+        1168
+      ],
+      "webhookId": "generate-quiz"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step: JSON Formate processing\n// LangChain nodes return result in .text property\nconst aiResponse = $node[\"AI Analysing\"].json.text;\nlet cleanData = aiResponse.trim();\nif (cleanData.startsWith('```json')) {\n  cleanData = cleanData.replace(/^```json/, '');\n}\nif (cleanData.startsWith('```')) {\n  cleanData = cleanData.replace(/^```/, '');\n}\nif (cleanData.endsWith('```')) {\n  cleanData = cleanData.replace(/```$/, '');\n}\ncleanData = cleanData.trim();\n\nconst questions = JSON.parse(cleanData);\n\n// We return A SINGLE ITEM containing the full array of questions.\n// This ensures n8n sends the entire array in one webhook response body.\nreturn [{ json: questions }];"
+      },
+      "oldString:,
+      "oldString:,
+      "id": "40a9286b-c0cc-43a2-8fa4-f2915495f293",
+      "name": "JSON Formate1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "31ea0a0a-62c1-4f52-8a7b-710dba7e6fde",
+      "name": "Responsive Webhook1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        480,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "model": "openrouter/auto",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        144,
+        1712
+      ],
+      "id": "97e35ef8-b854-4692-8ff3-2142982e16e4",
+      "name": "OpenRouter Chat Model1",
+      "credentials": {
+        "openRouterApi": {
+          "id": "zER34E5LGvRxnRE1",
+          "name": "OpenRouter account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "AI Analysing": {
+      "main": [
+        [
+          {
+            "node": "JSON Formate1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Frontend Request1": {
+      "main": [
+        [
+          {
+            "node": "AI Analysing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Formate1": {
+      "main": [
+        [
+          {
+            "node": "Responsive Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Analysing",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "16ae3bcc-f185-4c2d-8675-e9e75b59e064",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac53766b75ba98327cb8367953362c144cd1e7b33149a3b252d1556380af54e8"
+  },
+  "id": "Dkf1BQualerFB9gh",
+  "tags": []
+}

@@ -150,7 +150,10 @@ const TeacherContentCreate = () => {
       const context = `${video.title}\n${video.description}`;
       const generatedQuestions = await instructorService.generateQuiz(context, "medium", 5);
       
-      console.log("AI Generated Questions:", generatedQuestions);
+      console.log("=== AI RESPONSE START ===");
+      console.log("Raw response:", JSON.stringify(generatedQuestions));
+      console.log("Array length:", generatedQuestions?.length);
+      console.log("=== AI RESPONSE END ===");
 
       if (!generatedQuestions || generatedQuestions.length === 0) {
         toast({ title: "No questions generated", description: "Please try again with more context.", variant: "destructive" });
@@ -161,6 +164,8 @@ const TeacherContentCreate = () => {
       const mappedQuestions = generatedQuestions.map((q: any, index: number) => {
         const questionText = q.questionText || q.question || q.text || "Untitled Question";
         const rawOptions = q.options || q.answers || q.choices || [];
+        
+        console.log(`Question ${index}:`, questionText, "Options count:", rawOptions.length);
         
         return {
           id: `ai-q-${Date.now()}-${index}`,
@@ -174,7 +179,13 @@ const TeacherContentCreate = () => {
         };
       });
 
-      console.log("Mapped Questions:", mappedQuestions);
+      console.log("=== MAPPED QUESTIONS ===");
+      console.log("Count:", mappedQuestions.length);
+      mappedQuestions.forEach((q: any, i: number) => {
+        console.log(`Q${i+1}:`, q.text, "- Options:", q.options.map((o: any) => o.text.substring(0, 30)));
+      });
+      console.log("=======================");
+      
       setQuestions(mappedQuestions);
       
       // Small delay to ensure state updates before navigation

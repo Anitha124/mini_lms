@@ -40,111 +40,69 @@ const extractAnyArray = (data) => {
     
     console.log('[AI] Data type:', typeof data);
     
-    // Case 1: Object with questions array (our n8n wrapper format)
+    // Case 1: { success: true, questions: [...] } format
     if (data && typeof data === 'object' && data.questions && Array.isArray(data.questions)) {
-        console.log('[AI] Found questions array in wrapper format, count:', data.questions.length);
+        console.log('[AI] Found questions in {success, questions} format, count:', data.questions.length);
         return normalizeItems(data.questions);
     }
 
-    // Case 2: Direct array of questions
+    // Case 2: Array with wrapper {json: {success: true, questions: [...]}}
+    if (Array.isArray(data) && data.length === 1 && data[0] && data[0].json && data[0].json.questions) {
+        const questions = data[0].json.questions;
+        console.log('[AI] Found questions in array wrapper, count:', questions.length);
+        return normalizeItems(questions);
+    }
+
+    // Case 3: Direct array of questions
     if (Array.isArray(data)) {
         console.log('[AI] Data is array, length:', data.length);
         
-        // Check if items have questionText or question property
-        if (data.length > 0) {
-            const firstItem = data[0];
-            console.log('[AI] First item keys:', firstItem ? Object.keys(firstItem) : 'null');
+        const allQuestions = [];
+        data.forEach((item, idx) => {
+            if (!item) return;
             
-            // If items are {json: {...}} format (n8n multi-item)
-            if (firstItem && firstItem.json) {
-                console.log('[AI] Detected n8n multi-item format');
-                const extracted = data.map(item => item.json);
-                // Check if extracted has questions wrapper
-                if (extracted.length === 1 && extracted[0] && extracted[0].questions) {
-                    return normalizeItems(extracted[0].questions);
-                }
-                return normalizeItems(extracted);
+            // { json: { questions: [...] } }
+            if (item.json && item.json.questions && Array.isArray(item.json.questions)) {
+                allQuestions.push(...item.json.questions);
             }
-            
-            // If first item has questionText or question, it's a question array
-            if (firstItem && (firstItem.questionText || firstItem.question)) {
-                console.log('[AI] Direct question array detected');
-                return normalizeItems(data);
+            // { questions: [...] } - Direct check
+            else if (item.questions && Array.isArray(item.questions)) {
+                allQuestions.push(...item.questions);
             }
+            // { json: { questionText: "..." } }
+            else if (item.json && (item.json.questionText || item.json.question)) {
+                allQuestions.push(item.json);
+            }
+            // { questionText: "..." }
+            else if (item.questionText || item.question) {
+                allQuestions.push(item);
+            }
+        });
+        
+        if (allQuestions.length > 0) {
+            console.log('[AI] Total questions extracted:', allQuestions.length);
+            return normalizeItems(allQuestions);
         }
         
-        return normalizeItems(data);
+        // Fallback
+        if (data[0] && (data[0].questionText || data[0].question)) {
+            return normalizeItems(data);
+        }
     }
 
-    // Case 3: Single question object (not array)
+    // Case 4: Single question object
     if (data && typeof data === 'object' && (data.questionText || data.question)) {
-        console.log('[AI] Single question object detected');
+        console.log('[AI] Single question object');
         return normalizeItems([data]);
     }
 
-    // Case 4: Object with nested array
-    if (data && typeof data === 'object') {
-        // Try common keys
-        const keysToTry = ['json', 'data', 'result', 'output', 'response'];
-        
-        for (const key of keysToTry) {
-            if (data[key] && Array.isArray(data[key])) {
-                console.log('[AI] Found array at key:', key);
-                return normalizeItems(data[key]);
-            }
-            
-            // Handle nested object with questions
-            if (data[key] && typeof data[key] === 'object') {
-                if (data[key].questions && Array.isArray(data[key].questions)) {
-                    console.log('[AI] Found questions array at key:', key);
-                    return normalizeItems(data[key].questions);
-                }
-                if (data[key].questionText) {
-                    console.log('[AI] Found single question at key:', key);
-                    return normalizeItems([data[key]]);
-                }
-            }
-        }
-        
-        // Search recursively for array
-        for (const key in data) {
-            if (Array.isArray(data[key]) && data[key].length > 0) {
-                const first = data[key][0];
-                if (first && (first.questionText || first.question || first.options)) {
-                    console.log('[AI] Found question array at key:', key);
-                    return normalizeItems(data[key]);
-                }
-            }
-        }
-    }
-
-    console.log('[AI] Could not extract questions from response');
+    console.log('[AI] Could not extract questions');
     return [];
 };
 
 // Handle standalone options array (n8n might return just options without question wrapper)
 const normalizeStandaloneOptions = (optionsArray) => {
     if (!optionsArray || optionsArray.length === 0) return [];
-    
-    const questions = [];
-    const optionsPerQuestion = 4;
-    
-    for (let i = 0; i < optionsArray.length; i += optionsPerQuestion) {
-        const questionOptions = optionsArray.slice(i, i + optionsPerQuestion);
-        
-        if (questionOptions.length >= 2) {
-            questions.push({
-                questionText: `Question ${Math.floor(i / optionsPerQuestion) + 1}`,
-                questionType: "mcq-single",
-                options: questionOptions.map(opt => ({
-                    text: opt.text || "",
-                    isCorrect: !!opt.isCorrect
-                }))
-            });
-        }
-    }
-    
-    return questions;
 };
 
 // Internal helper to normalize question format
@@ -466,9 +424,19 @@ exports.generateQuizAI = async (req, res) => {
                     type: 'generate_quiz'
                 });
                 
-                console.log('[AI] Raw n8n response:', JSON.stringify(n8nResponse.data).substring(0, 500));
+                console.log('[AI] ===== RAW N8N RESPONSE START =====');
+                console.log('[AI] Full response:', JSON.stringify(n8nResponse.data));
+                console.log('[AI] Is array?', Array.isArray(n8nResponse.data));
+                if (Array.isArray(n8nResponse.data)) {
+                    console.log('[AI] Array length:', n8nResponse.data.length);
+                    n8nResponse.data.forEach((item, idx) => {
+                        console.log(`[AI] Item ${idx}:`, JSON.stringify(item));
+                    });
+                }
+                console.log('[AI] ===== RAW N8N RESPONSE END =====');
+                
                 generatedQuestions = extractAnyArray(n8nResponse.data);
-                console.log('[AI] Extracted questions:', JSON.stringify(generatedQuestions).substring(0, 500));
+                console.log('[AI] Extracted questions count:', generatedQuestions.length);
             } catch (n8nError) {
                 console.error('n8n Webhook Error:', n8nError.message);
                 if (n8nError.response?.status === 404) {
@@ -498,8 +466,7 @@ exports.generateQuizAI = async (req, res) => {
 
         res.json({
             success: true,
-            questions: generatedQuestions,
-            message: 'Quiz generated successfully'
+            questions: generatedQuestions
         });
 
     } catch (error) {
