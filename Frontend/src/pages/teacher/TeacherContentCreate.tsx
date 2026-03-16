@@ -151,23 +151,33 @@ const TeacherContentCreate = () => {
       // Assuming questionCount 5 for now
       const generatedQuestions = await instructorService.generateQuiz(context, "medium", 5);
 
+      interface BackendQuestion {
+        questionText: string;
+        options: { text: string; isCorrect: boolean }[];
+      }
+
       // Map backend questions to frontend structure
-      const mappedQuestions = generatedQuestions.map((q: any, index: number) => ({
+      const mappedQuestions = (generatedQuestions as BackendQuestion[]).map((q, index) => ({
         id: Date.now().toString() + index,
         text: q.questionText,
-        options: q.options.map((o: any, i: number) => ({
+        options: q.options.map((o, i) => ({
           id: Date.now().toString() + index + "opt" + i,
           text: o.text || "",
           isCorrect: o.isCorrect
         })),
-        difficulty: "medium"
+        difficulty: "medium" as "easy" | "medium" | "hard"
       }));
 
       setQuestions(mappedQuestions);
       toast({ title: "Quiz Generated", description: "AI has successfully generated questions based on your video context." });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("AI Generation Error:", error);
-      toast({ title: "Generation failed", description: "Could not generate quiz. Please try again.", variant: "destructive" });
+      const errorMsg = error instanceof Error ? error.message : "Could not generate quiz. Please try again.";
+      toast({ 
+        title: "Generation failed", 
+        description: errorMsg, 
+        variant: "destructive" 
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -316,7 +326,7 @@ const TeacherContentCreate = () => {
       console.error("Publishing error:", error);
       toast({
         title: "Publish failed",
-        description: (error as any).message || "Failed to save module. Please try again.",
+        description: (error as Error).message || "Failed to save module. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -507,15 +517,21 @@ const TeacherContentCreate = () => {
                       className="space-y-4"
                     >
                       <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
-                        <img
-                          src={video.thumbnail}
-                          alt="Video thumbnail"
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src =
-                              "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800";
-                          }}
-                        />
+                        {video.thumbnail ? (
+                          <img
+                            src={video.thumbnail}
+                            alt="Video thumbnail"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800";
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-secondary">
+                             <Video className="h-12 w-12 text-muted-foreground" />
+                          </div>
+                        )}
                         <div className="absolute inset-0 flex items-center justify-center bg-background/30">
                           <motion.div
                             className="w-16 h-16 rounded-full bg-primary/90 flex items-center justify-center cursor-pointer"

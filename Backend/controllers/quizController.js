@@ -8,26 +8,26 @@ const ActivityLog = require('../models/ActivityLog');
 const progressController = require('./progressController');
 const OpenAI = require('openai');
 
-const openaiOptions = {
-    apiKey: process.env.OPENROUTER_API_KEY,
+// Initialize AI Client
+const getOpenAI = () => {
+    const orKey = (process.env.OPENROUTER_API_KEY || '').trim();
+    const oaKey = (process.env.OPENAI_API_KEY || '').trim();
+    const selectedKey = orKey || oaKey;
+    const isOR = orKey !== '';
+
+    const opts = { apiKey: selectedKey };
+    if (isOR) {
+        opts.baseURL = 'https://openrouter.ai/api/v1';
+        opts.defaultHeaders = {
+            "HTTP-Referer": "http://localhost:5000",
+            "X-Title": "EduNexus LMS",
+        };
+    }
+    return { client: new OpenAI(opts), isOR };
 };
 
-// Log initialization info (sanitized) to help debug 401 errors
-const apiKey = process.env.OPENROUTER_API_KEY || '';
-const isOpenRouter = apiKey.startsWith('sk-or-');
-
-if (isOpenRouter) {
-    openaiOptions.baseURL = 'https://openrouter.ai/api/v1';
-    openaiOptions.defaultHeaders = {
-        "HTTP-Referer": "http://localhost:5000",
-        "X-Title": "EduNexus LMS",
-    };
-    console.log(`[AI] Initializing with OpenRouter. Key starts with: ${apiKey.substring(0, 10)}...`);
-} else {
-    console.log(`[AI] Initializing with OpenAI. Key starts with: ${apiKey.substring(0, 7)}...`);
-}
-
-const openai = new OpenAI(openaiOptions);
+const { client: openai, isOR: isOpenRouter } = getOpenAI();
+console.log(`[AI] Initialized with ${isOpenRouter ? 'OpenRouter' : 'OpenAI'}. Key starts with: ${(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').substring(0, 14)}...`);
 
 // Create quiz
 exports.createQuiz = async (req, res) => {
@@ -302,9 +302,7 @@ exports.generateQuizAI = async (req, res) => {
             ${context}
         `;
 
-        const modelName = process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.startsWith('sk-or-') 
-            ? "openrouter/auto" 
-            : "gpt-4o-mini";
+        const modelName = isOpenRouter ? "openrouter/auto" : "gpt-4o-mini";
 
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
@@ -332,6 +330,12 @@ exports.generateQuizAI = async (req, res) => {
 
     } catch (error) {
         console.error('Error generating AI quiz:', error);
+        
+        // Log detailed error for debugging
+        if (error.response) {
+            console.error('OpenRouter Error Data:', error.response.data);
+        }
+
         const status = error.status || 500;
         const message = error.error?.message || error.message || 'Server error during AI generation';
         res.status(status).json({ success: false, message: `AI Error (${status}): ${message}` });
@@ -358,9 +362,7 @@ exports.suggestOptionsAI = async (req, res) => {
             ${questionText}
         `;
 
-        const modelName = process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.startsWith('sk-or-') 
-            ? "openrouter/auto" 
-            : "gpt-4o-mini";
+        const modelName = isOpenRouter ? "openrouter/auto" : "gpt-4o-mini";
 
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
