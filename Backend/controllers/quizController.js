@@ -7,23 +7,178 @@ const Enrollment = require('../models/Enrollment');
 const ActivityLog = require('../models/ActivityLog');
 const progressController = require('./progressController');
 const OpenAI = require('openai');
+const axios = require('axios');
 
-// Initialize OpenRouter Client
-const openai = new OpenAI({
-    apiKey: (process.env.OPENROUTER_API_KEY || '').trim(),
-    baseURL: 'https://openrouter.ai/api/v1',
-    defaultHeaders: {
-        "HTTP-Referer": "http://localhost:5000",
-        "X-Title": "EduNexus LMS",
-    }
-});
+// Initialize AI Client
+let openai = null;
+const orKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
-const fullKey = (process.env.OPENROUTER_API_KEY || '').trim();
+if (orKey) {
+    openai = new OpenAI({
+        apiKey: orKey,
+        baseURL: 'https://openrouter.ai/api/v1',
+        defaultHeaders: {
+            "HTTP-Referer": "http://localhost:5000",
+            "X-Title": "EduNexus LMS",
+        }
+    });
+}
+
+const fullKey = orKey;
 const maskedKey = fullKey.length > 10 
     ? `${fullKey.substring(0, 10)}...${fullKey.substring(fullKey.length - 4)}` 
     : 'MISSING_OPENROUTER_KEY';
 
-console.log(`[AI] 🚀 OpenRouter strictly enabled. Key: ${maskedKey}`);
+console.log(`[AI] ${openai ? '🚀 OpenRouter Client initialized.' : 'ℹ️  OpenRouter Key missing, relying on N8N fallback.'} Key: ${maskedKey}`);
+
+// Utility to extract questions from AI/n8n response
+const extractAnyArray = (data) => {
+    if (!data) {
+        console.log('[AI] No data received');
+        return [];
+    }
+    
+    console.log('[AI] Data type:', typeof data);
+    
+    // Case 1: Object with questions array (our n8n wrapper format)
+    if (data && typeof data === 'object' && data.questions && Array.isArray(data.questions)) {
+        console.log('[AI] Found questions array in wrapper format, count:', data.questions.length);
+        return normalizeItems(data.questions);
+    }
+
+    // Case 2: Direct array of questions
+    if (Array.isArray(data)) {
+        console.log('[AI] Data is array, length:', data.length);
+        
+        // Check if items have questionText or question property
+        if (data.length > 0) {
+            const firstItem = data[0];
+            console.log('[AI] First item keys:', firstItem ? Object.keys(firstItem) : 'null');
+            
+            // If items are {json: {...}} format (n8n multi-item)
+            if (firstItem && firstItem.json) {
+                console.log('[AI] Detected n8n multi-item format');
+                const extracted = data.map(item => item.json);
+                // Check if extracted has questions wrapper
+                if (extracted.length === 1 && extracted[0] && extracted[0].questions) {
+                    return normalizeItems(extracted[0].questions);
+                }
+                return normalizeItems(extracted);
+            }
+            
+            // If first item has questionText or question, it's a question array
+            if (firstItem && (firstItem.questionText || firstItem.question)) {
+                console.log('[AI] Direct question array detected');
+                return normalizeItems(data);
+            }
+        }
+        
+        return normalizeItems(data);
+    }
+
+    // Case 3: Single question object (not array)
+    if (data && typeof data === 'object' && (data.questionText || data.question)) {
+        console.log('[AI] Single question object detected');
+        return normalizeItems([data]);
+    }
+
+    // Case 4: Object with nested array
+    if (data && typeof data === 'object') {
+        // Try common keys
+        const keysToTry = ['json', 'data', 'result', 'output', 'response'];
+        
+        for (const key of keysToTry) {
+            if (data[key] && Array.isArray(data[key])) {
+                console.log('[AI] Found array at key:', key);
+                return normalizeItems(data[key]);
+            }
+            
+            // Handle nested object with questions
+            if (data[key] && typeof data[key] === 'object') {
+                if (data[key].questions && Array.isArray(data[key].questions)) {
+                    console.log('[AI] Found questions array at key:', key);
+                    return normalizeItems(data[key].questions);
+                }
+                if (data[key].questionText) {
+                    console.log('[AI] Found single question at key:', key);
+                    return normalizeItems([data[key]]);
+                }
+            }
+        }
+        
+        // Search recursively for array
+        for (const key in data) {
+            if (Array.isArray(data[key]) && data[key].length > 0) {
+                const first = data[key][0];
+                if (first && (first.questionText || first.question || first.options)) {
+                    console.log('[AI] Found question array at key:', key);
+                    return normalizeItems(data[key]);
+                }
+            }
+        }
+    }
+
+    console.log('[AI] Could not extract questions from response');
+    return [];
+};
+
+// Handle standalone options array (n8n might return just options without question wrapper)
+const normalizeStandaloneOptions = (optionsArray) => {
+    if (!optionsArray || optionsArray.length === 0) return [];
+    
+    const questions = [];
+    const optionsPerQuestion = 4;
+    
+    for (let i = 0; i < optionsArray.length; i += optionsPerQuestion) {
+        const questionOptions = optionsArray.slice(i, i + optionsPerQuestion);
+        
+        if (questionOptions.length >= 2) {
+            questions.push({
+                questionText: `Question ${Math.floor(i / optionsPerQuestion) + 1}`,
+                questionType: "mcq-single",
+                options: questionOptions.map(opt => ({
+                    text: opt.text || "",
+                    isCorrect: !!opt.isCorrect
+                }))
+            });
+        }
+    }
+    
+    return questions;
+};
+
+// Internal helper to normalize question format
+const normalizeItems = (finalArray) => {
+    return finalArray.map(item => {
+        if (!item || typeof item !== 'object') return null;
+
+        const questionText = item.questionText || item.question || item.q || "Untitled Question";
+        
+        let options = [];
+        if (item.options && Array.isArray(item.options)) {
+            options = item.options.map(opt => ({
+                text: typeof opt === 'string' ? opt : (opt.text || opt.answer || opt.option || ""),
+                isCorrect: typeof opt === 'object' ? (opt.isCorrect !== undefined ? !!opt.isCorrect : !!opt.correct) : false
+            }));
+        } else if (item.answers && Array.isArray(item.answers)) {
+            options = item.answers.map(opt => ({
+                text: typeof opt === 'string' ? opt : (opt.text || opt.answer || opt.option || ""),
+                isCorrect: typeof opt === 'object' ? (opt.isCorrect !== undefined ? !!opt.isCorrect : !!opt.correct) : false
+            }));
+        } else if (item.choices && Array.isArray(item.choices)) {
+            options = item.choices.map(opt => ({
+                text: typeof opt === 'string' ? opt : (opt.text || opt.answer || opt.option || ""),
+                isCorrect: typeof opt === 'object' ? (opt.isCorrect !== undefined ? !!opt.isCorrect : !!opt.correct) : false
+            }));
+        }
+
+        return {
+            questionText: questionText,
+            questionType: item.questionType || "mcq-single",
+            options: options
+        };
+    }).filter(item => item && item.options && item.options.length >= 2);
+};
 
 // Create quiz
 exports.createQuiz = async (req, res) => {
@@ -279,6 +434,7 @@ exports.getQuizResults = async (req, res) => {
 exports.generateQuizAI = async (req, res) => {
     try {
         const { context, difficulty = 'intermediate', questionCount = 5 } = req.body;
+        let generatedQuestions = [];
 
         if (!context) {
             return res.status(400).json({ success: false, message: 'Context (video description or text) is required' });
@@ -298,24 +454,46 @@ exports.generateQuizAI = async (req, res) => {
             ${context}
         `;
 
-        const modelName = "openrouter/auto";
+        const n8nUrl = process.env.N8N_WEBHOOK_URL;
 
-        const completion = await openai.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
-            model: modelName,
-        });
+        if (n8nUrl) {
+            console.log('[AI] 🤖 Routing request through n8n workflow...');
+            try {
+                const n8nResponse = await axios.post(n8nUrl, {
+                    context,
+                    difficulty,
+                    questionCount,
+                    type: 'generate_quiz'
+                });
+                
+                console.log('[AI] Raw n8n response:', JSON.stringify(n8nResponse.data).substring(0, 500));
+                generatedQuestions = extractAnyArray(n8nResponse.data);
+                console.log('[AI] Extracted questions:', JSON.stringify(generatedQuestions).substring(0, 500));
+            } catch (n8nError) {
+                console.error('n8n Webhook Error:', n8nError.message);
+                if (n8nError.response?.status === 404) {
+                    return res.status(404).json({ 
+                        success: false, 
+                        message: 'n8n Webhook Not Found (404). Tip: If using a -test URL, make sure you clicked "Execute Workflow" in n8n. Otherwise, use the Production URL.' 
+                    });
+                }
+                throw n8nError;
+            }
+        } else if (openai) {
+            console.log('[AI] ⚠️ n8n URL not found, falling back to direct OpenRouter call...');
+            const completion = await openai.chat.completions.create({
+                messages: [{ role: "user", content: prompt }],
+                model: "openrouter/auto",
+            });
 
-        const content = completion.choices[0].message.content;
-
-        // Clean up markdown if present (e.g. ```json ... ```)
-        const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-
-        let generatedQuestions;
-        try {
+            const content = completion.choices[0].message.content;
+            const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
             generatedQuestions = JSON.parse(cleanContent);
-        } catch (parseError) {
-            console.error('Failed to parse AI response:', content);
-            return res.status(500).json({ success: false, message: 'AI generation failed to produce valid JSON' });
+        } else {
+            return res.status(500).json({ 
+                success: false, 
+                message: 'No AI configuration found. Please provide either N8N_WEBHOOK_URL or OPENROUTER_API_KEY in the .env file.' 
+            });
         }
 
         res.json({
@@ -365,22 +543,42 @@ exports.suggestOptionsAI = async (req, res) => {
             ${questionText}
         `;
 
-        const modelName = "openrouter/auto";
-
-        const completion = await openai.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
-            model: modelName,
-        });
-
-        const content = completion.choices[0].message.content;
-        const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-
+        const n8nUrl = process.env.N8N_WEBHOOK_URL;
         let suggestedOptions;
-        try {
+
+        if (n8nUrl) {
+            console.log('[AI] 🤖 Routing suggestion through n8n workflow...');
+            try {
+                const n8nResponse = await axios.post(n8nUrl, {
+                    questionText,
+                    type: 'suggest_options'
+                });
+                
+                suggestedOptions = extractAnyArray(n8nResponse.data);
+            } catch (n8nError) {
+                console.error('n8n Webhook Error (Suggestion):', n8nError.message);
+                if (n8nError.response?.status === 404) {
+                    return res.status(404).json({ 
+                        success: false, 
+                        message: 'n8n Webhook Not Found (404). Tip: Ensure n8n is in Production mode or Execute is active.' 
+                    });
+                }
+                throw n8nError;
+            }
+        } else if (openai) {
+            const completion = await openai.chat.completions.create({
+                messages: [{ role: "user", content: prompt }],
+                model: "openrouter/auto",
+            });
+
+            const content = completion.choices[0].message.content;
+            const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
             suggestedOptions = JSON.parse(cleanContent);
-        } catch (parseError) {
-            console.error('Failed to parse AI response:', content);
-            return res.status(500).json({ success: false, message: 'AI failed to produce valid JSON' });
+        } else {
+            return res.status(500).json({ 
+                success: false, 
+                message: 'No AI configuration found for suggestions.' 
+            });
         }
 
         res.json({

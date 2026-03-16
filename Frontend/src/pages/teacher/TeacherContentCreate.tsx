@@ -148,28 +148,41 @@ const TeacherContentCreate = () => {
     setIsGenerating(true);
     try {
       const context = `${video.title}\n${video.description}`;
-      // Assuming questionCount 5 for now
       const generatedQuestions = await instructorService.generateQuiz(context, "medium", 5);
+      
+      console.log("AI Generated Questions:", generatedQuestions);
 
-      interface BackendQuestion {
-        questionText: string;
-        options: { text: string; isCorrect: boolean }[];
+      if (!generatedQuestions || generatedQuestions.length === 0) {
+        toast({ title: "No questions generated", description: "Please try again with more context.", variant: "destructive" });
+        setIsGenerating(false);
+        return;
       }
 
-      // Map backend questions to frontend structure
-      const mappedQuestions = (generatedQuestions as BackendQuestion[]).map((q, index) => ({
-        id: Date.now().toString() + index,
-        text: q.questionText,
-        options: q.options.map((o, i) => ({
-          id: Date.now().toString() + index + "opt" + i,
-          text: o.text || "",
-          isCorrect: o.isCorrect
-        })),
-        difficulty: "medium" as "easy" | "medium" | "hard"
-      }));
+      const mappedQuestions = generatedQuestions.map((q: any, index: number) => {
+        const questionText = q.questionText || q.question || q.text || "Untitled Question";
+        const rawOptions = q.options || q.answers || q.choices || [];
+        
+        return {
+          id: `ai-q-${Date.now()}-${index}`,
+          text: questionText,
+          options: (Array.isArray(rawOptions) ? rawOptions : []).map((opt: any, optIndex: number) => ({
+            id: `ai-opt-${Date.now()}-${index}-${optIndex}`,
+            text: typeof opt === 'string' ? opt : (opt.text || opt.answer || opt.option || ""),
+            isCorrect: typeof opt === 'object' ? (opt.isCorrect !== undefined ? !!opt.isCorrect : !!opt.correct) : false
+          })),
+          difficulty: (q.difficulty as "easy" | "medium" | "hard") || "medium"
+        };
+      });
 
+      console.log("Mapped Questions:", mappedQuestions);
       setQuestions(mappedQuestions);
-      toast({ title: "Quiz Generated", description: "AI has successfully generated questions based on your video context." });
+      
+      // Small delay to ensure state updates before navigation
+      setTimeout(() => {
+        setCurrentStep(2);
+      }, 100);
+      
+      toast({ title: "Questions Generated", description: `Successfully populated ${mappedQuestions.length} questions.` });
     } catch (error: unknown) {
       console.error("AI Generation Error:", error);
       const errorMsg = error instanceof Error ? error.message : "Could not generate quiz. Please try again.";
@@ -639,7 +652,7 @@ const TeacherContentCreate = () => {
                         className="gap-2 border-primary/20 text-primary hover:bg-primary/5"
                       >
                         <Sparkles className={`h-4 w-4 ${isGenerating ? "animate-pulse" : ""}`} />
-                        {isGenerating ? "Generating..." : "Generate with AI"}
+                        {isGenerating ? "Generate with AI" : "Generate with AI"}
                       </Button>
                       <Badge variant="outline" className={questions.length >= 5 ? "bg-green-500/10 text-green-500" : "bg-amber-500/10 text-amber-500"}>
                         {questions.length}/5 minimum questions
@@ -647,7 +660,7 @@ const TeacherContentCreate = () => {
                     </div>
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
                   {questions.length < 5 && (
                     <motion.div
                       initial={{ opacity: 0 }}

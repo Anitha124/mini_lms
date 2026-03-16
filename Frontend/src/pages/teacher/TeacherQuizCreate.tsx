@@ -189,16 +189,21 @@ const TeacherQuizCreate = () => {
         aiQuestionCount
       );
 
-      const formattedQuestions: Question[] = generatedQuestions.map((q: any, index: number) => ({
-        id: `ai-${Date.now()}-${index}`,
-        text: q.questionText,
-        options: q.options.map((opt: any, optIndex: number) => ({
-          id: `ai-opt-${Date.now()}-${index}-${optIndex}`,
-          text: opt.text,
-          isCorrect: opt.isCorrect,
-        })),
-        points: 10,
-      }));
+      const formattedQuestions: Question[] = (generatedQuestions || []).map((q: any, index: number) => {
+        const questionText = q.questionText || q.question || q.text || "Untitled Question";
+        const rawOptions = q.options || q.answers || q.choices || [];
+        
+        return {
+          id: `ai-q-${Date.now()}-${index}`,
+          text: questionText,
+          options: (Array.isArray(rawOptions) ? rawOptions : []).map((opt: any, optIndex: number) => ({
+            id: `ai-opt-${Date.now()}-${index}-${optIndex}`,
+            text: typeof opt === 'string' ? opt : (opt.text || opt.answer || opt.option || ""),
+            isCorrect: typeof opt === 'object' ? (opt.isCorrect !== undefined ? !!opt.isCorrect : !!opt.correct) : false
+          })),
+          points: 10,
+        };
+      });
 
       setQuestions(formattedQuestions);
       setActiveTab("questions");
