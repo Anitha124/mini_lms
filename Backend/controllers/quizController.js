@@ -8,26 +8,22 @@ const ActivityLog = require('../models/ActivityLog');
 const progressController = require('./progressController');
 const OpenAI = require('openai');
 
-// Initialize AI Client
-const getOpenAI = () => {
-    const orKey = (process.env.OPENROUTER_API_KEY || '').trim();
-    const oaKey = (process.env.OPENAI_API_KEY || '').trim();
-    const selectedKey = orKey || oaKey;
-    const isOR = orKey !== '';
-
-    const opts = { apiKey: selectedKey };
-    if (isOR) {
-        opts.baseURL = 'https://openrouter.ai/api/v1';
-        opts.defaultHeaders = {
-            "HTTP-Referer": "http://localhost:5000",
-            "X-Title": "EduNexus LMS",
-        };
+// Initialize OpenRouter Client
+const openai = new OpenAI({
+    apiKey: (process.env.OPENROUTER_API_KEY || '').trim(),
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+        "HTTP-Referer": "http://localhost:5000",
+        "X-Title": "EduNexus LMS",
     }
-    return { client: new OpenAI(opts), isOR };
-};
+});
 
-const { client: openai, isOR: isOpenRouter } = getOpenAI();
-console.log(`[AI] Initialized with ${isOpenRouter ? 'OpenRouter' : 'OpenAI'}. Key starts with: ${(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').substring(0, 14)}...`);
+const fullKey = (process.env.OPENROUTER_API_KEY || '').trim();
+const maskedKey = fullKey.length > 10 
+    ? `${fullKey.substring(0, 10)}...${fullKey.substring(fullKey.length - 4)}` 
+    : 'MISSING_OPENROUTER_KEY';
+
+console.log(`[AI] 🚀 OpenRouter strictly enabled. Key: ${maskedKey}`);
 
 // Create quiz
 exports.createQuiz = async (req, res) => {
@@ -302,7 +298,7 @@ exports.generateQuizAI = async (req, res) => {
             ${context}
         `;
 
-        const modelName = isOpenRouter ? "openrouter/auto" : "gpt-4o-mini";
+        const modelName = "openrouter/auto";
 
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
@@ -331,14 +327,21 @@ exports.generateQuizAI = async (req, res) => {
     } catch (error) {
         console.error('Error generating AI quiz:', error);
         
-        // Log detailed error for debugging
-        if (error.response) {
-            console.error('OpenRouter Error Data:', error.response.data);
+        const status = error.status || 500;
+        let message = error.error?.message || error.message || 'Server error during AI generation';
+
+        // Translate the confusing "User not found" error from OpenRouter/API
+        if (message.toLowerCase().includes("user not found")) {
+            message = "AI API Key Error: The provided OpenRouter/OpenAI account was not found. Please check your API key.";
+        } else if (status === 401) {
+            message = "AI Authentication Failed: The API key is invalid or has expired.";
         }
 
-        const status = error.status || 500;
-        const message = error.error?.message || error.message || 'Server error during AI generation';
-        res.status(status).json({ success: false, message: `AI Error (${status}): ${message}` });
+        res.status(status).json({ 
+            success: false, 
+            error: "AI_GENERATION_FAILED",
+            message: `AI Error (${status}): ${message}. Tip: If using OpenRouter, make sure your key is active and your account is verified at openrouter.ai.` 
+        });
     }
 };
 
@@ -362,7 +365,7 @@ exports.suggestOptionsAI = async (req, res) => {
             ${questionText}
         `;
 
-        const modelName = isOpenRouter ? "openrouter/auto" : "gpt-4o-mini";
+        const modelName = "openrouter/auto";
 
         const completion = await openai.chat.completions.create({
             messages: [{ role: "user", content: prompt }],

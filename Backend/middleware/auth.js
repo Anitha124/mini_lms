@@ -31,7 +31,8 @@ const protect = async (req, res, next) => {
                 console.log('🔴 User NOT FOUND for ID:', decoded.id);
                 return res.status(401).json({
                     success: false,
-                    message: 'User not found'
+                    error: "Unauthorized",
+                    message: "Instructor authentication required"
                 });
             }
 
